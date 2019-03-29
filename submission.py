@@ -240,7 +240,7 @@ class HMM():
 			eps_k = np.random.randn()
 			self.mu[k] += 0.01*eps_k*np.sqrt(sg_model.r)
 		self.r = np.tile(sg_model.r, (nstate,1))
-		self.A, self.pi = initializeHmmEqual(data, nstate)
+		self.A, self.pi = initializeHmm(data, nstate)
 		self.nstate = nstate
 
 
@@ -251,51 +251,49 @@ class HMM():
 		log_z = logSumExp(log_alpha[-1])
 
 		log_gamma = log_alpha + log_beta - log_z
-		gamma = np.exp(log_gamma)
 
 		log_A = elog(self.A)
 
-		xi = np.zeros((T-1, self.nstate, self.nstate))
+		log_xi = np.zeros((T-1, self.nstate, self.nstate))
 		for t in range(T-1):
 			for i in range(self.nstate):
 				for j in range(self.nstate):
-					xi[t,i,j] = np.exp(log_alpha[t,i] + 
+					log_xi[t,i,j] = (log_alpha[t,i] + 
 						compute_ll(data[t+1], self.mu[j], self.r[j]) + log_beta[t+1,j] + log_A[i,j] - log_z)
-
-		return gamma, xi
+		# print(xi)
+		return log_gamma, log_xi
 
 			
 
-	def m_step(self, data, gamma, xi):
+	def m_step(self, data, log_gamma, log_xi):
 		# Sufficient statistics for computing parameter updates
-		self.pi = gamma[0]/np.sum(gamma[0])
+		self.pi = np.exp(log_gamma[0] - logSumExp(log_gamma[0]))
 
-		xi_s = np.sum(xi, axis=0)
-		gamma_0 = np.sum(gamma, axis=0, keepdims=True).T
+		log_xi_s = logSumExp(log_xi, axis=0)
+		log_gamma_0 = logSumExp(log_gamma, axis=0, keepdims=True).T
 
-		gamma_1 = gamma_2 = np.zeros((self.nstate, data.shape[1]))
+		log_gamma_1 = log_gamma_2 = np.zeros((self.nstate, data.shape[1]))
 		for j in range(self.nstate):
-			gamma_1[j] = np.sum(np.multiply(data, np.expand_dims(gamma[:,j],axis=1)), axis=0)
-			gamma_2[j] = np.sum(np.multiply(data**2, np.expand_dims(gamma[:,j],axis=1)), axis=0)
+			log_gamma_1[j] = logSumExp(elog(data) + np.expand_dims(log_gamma[:,j],axis=1), axis=0)
+			log_gamma_1[j] = logSumExp(2*elog(data) + np.expand_dims(log_gamma[:,j],axis=1), axis=0)
 		# print(xi_s)
 		for i in range(self.nstate):
-			self.A[i] = xi_s[i]/np.sum(xi_s[i])
+			self.A[i] = np.exp(log_xi_s[i] - logSumExp(log_xi_s[i], keepdims=True))
 		# print(self.A)
-		self.mu = gamma_1/gamma_0
+		self.mu = np.exp(log_gamma_1-log_gamma_0)
 
 		r_num = np.zeros_like(self.r)
 		for j in range(self.nstate):
-			r_num[j] = np.sum(np.multiply(np.square(np.subtract(data, self.mu[j])), 
-				np.expand_dims(gamma[:,j],axis=1)), axis=0)
-		self.r = r_num/gamma_0
+			r_num[j] = logSumExp(2*elog(data - self.mu[j]) + np.expand_dims(log_gamma[:,j],axis=1), axis=0)
+		self.r = np.exp(r_num-log_gamma_0)
 		
 		return
 
 	def train(self, data):
 		# Function for training single modal Gaussian
 		for data_u in data:
-			gamma, xi = self.e_step(data_u)
-			self.m_step(data_u, gamma, xi)
+			gamma, log_xi = self.e_step(data_u)
+			self.m_step(data_u, gamma, log_xi)
 
 
 	def loglike(self, data):
