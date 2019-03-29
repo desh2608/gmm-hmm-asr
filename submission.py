@@ -251,6 +251,7 @@ class HMM():
 		log_z = logSumExp(log_alpha[-1])
 
 		log_gamma = log_alpha + log_beta - log_z
+		gamma = np.exp(log_gamma)
 
 		log_A = elog(self.A)
 
@@ -260,32 +261,34 @@ class HMM():
 				for j in range(self.nstate):
 					log_xi[t,i,j] = (log_alpha[t,i] + 
 						compute_ll(data[t+1], self.mu[j], self.r[j]) + log_beta[t+1,j] + log_A[i,j] - log_z)
-		# print(xi)
-		return log_gamma, log_xi
+		print("gamma",gamma.sum(axis=0))
+		return gamma, log_xi
 
 			
 
-	def m_step(self, data, log_gamma, log_xi):
+	def m_step(self, data, gamma, log_xi):
 		# Sufficient statistics for computing parameter updates
-		self.pi = np.exp(log_gamma[0] - logSumExp(log_gamma[0]))
+		self.pi = gamma[0]/np.sum(gamma[0])
+		print("pi",self.pi)
 
 		log_xi_s = logSumExp(log_xi, axis=0)
-		log_gamma_0 = logSumExp(log_gamma, axis=0, keepdims=True).T
+		gamma_0 = np.sum(gamma, axis=0, keepdims=True).T
 
-		log_gamma_1 = log_gamma_2 = np.zeros((self.nstate, data.shape[1]))
+		gamma_1 = gamma_2 = np.zeros((self.nstate, data.shape[1]))
 		for j in range(self.nstate):
-			log_gamma_1[j] = logSumExp(elog(data) + np.expand_dims(log_gamma[:,j],axis=1), axis=0)
-			log_gamma_1[j] = logSumExp(2*elog(data) + np.expand_dims(log_gamma[:,j],axis=1), axis=0)
+			gamma_1[j] = np.sum(np.multiply(data, np.expand_dims(gamma[:,j],axis=1)), axis=0)
+			gamma_2[j] = np.sum(np.multiply(data**2, np.expand_dims(gamma[:,j],axis=1)), axis=0)
 		# print(xi_s)
 		for i in range(self.nstate):
 			self.A[i] = np.exp(log_xi_s[i] - logSumExp(log_xi_s[i], keepdims=True))
 		# print(self.A)
-		self.mu = np.exp(log_gamma_1-log_gamma_0)
+		self.mu = gamma_1/gamma_0
 
 		r_num = np.zeros_like(self.r)
 		for j in range(self.nstate):
-			r_num[j] = logSumExp(2*elog(data - self.mu[j]) + np.expand_dims(log_gamma[:,j],axis=1), axis=0)
-		self.r = np.exp(r_num-log_gamma_0)
+			r_num[j] = np.sum(np.multiply(np.square(np.subtract(data, self.mu[j])), 
+				np.expand_dims(gamma[:,j],axis=1)), axis=0)
+		self.r = r_num/gamma_0
 		
 		return
 
