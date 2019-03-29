@@ -21,43 +21,10 @@ import numpy as np
 
 # warnings.showwarning = warn_with_traceback
 
-## Special "extended" functions for HMM zero probability log
-# Note: This is inspired from this paper: 
-# http://bozeman.genome.washington.edu/compbio/mbt599_2006/hmm_scaling_revised.pdf
-
-def eexp(x):
-	return np.exp(x, out=np.zeros_like(x), where=(x!=np.nan))
-
-def eln(x):
-	return np.log(x, out=np.zeros_like(x).fill(np.nan), where=(x!=0))
-
-def elnsum(eln_x, eln_y):
-
-	def foo(a,b):
-		if (a>b):
-			return (a+eln(1+np.exp(b-a)))
-		else:
-			return (b+eln(1+np.exp(a-b)))
-	
-	lnsum = np.array(eln_x, copy=True)
-	lnsum[np.isnan(eln_x)] = eln_y[np.isnan(eln_x)]
-	for i in range(len(eln_x)):
-		if (np.isnaneln_x[i] == np.nan)
-	not_nan = ~np.isnan(lnsum)
-	foo_np = np.vectorize(foo)
-	lnsum[not_nan] = foo_np(eln_x[not_nan], eln_y[not_nan])
-
-def elnsumx(eln_x):
-	out = np.nan
-	for x in eln_x:
-		out = elnsum(out, x)
-	return out
-
-def elnproduct(eln_x, eln_y):
-	not_nan = ~np.logical_or(np.nan(eln_x),np.nan(eln_y))
-	return np.sum(eln_x, eln_y, where=not_nan, out=np.zeros_like(x).fill(np.nan))
-
-
+def elog(x):
+	res = np.log(x, where=(x!=0))
+	res[np.where(x==0)] = -(10.0**8)
+	return (res)
 
 def get_data_dict(data):
 	data_dict = {}
@@ -87,87 +54,59 @@ def exp_normalize(x, axis=None, keepdims=False):
 def compute_ll(data, mu, r):
 	# Compute log-likelihood of a single n-dimensional data point, given a single
 	# mean and variance
-	ll = (- 0.5*np.log(r) - np.divide(
+	ll = (- 0.5*elog(r) - np.divide(
 			np.square(data - mu), 2*r) -0.5*np.log(2*np.pi)).sum()
 	return ll
 
-# def forward(pi, a, o, mu, r):
-# 	"""
-# 	Computes forward log-probabilities of all states
-# 	at all time steps.
-# 	Inputs:
-# 	pi: initial probability over states
-# 	a: transition matrix
-# 	o: observed n-dimensional data sequence
-# 	mu: means of Gaussians for each state
-# 	r: variances of Gaussians for each state
-# 	"""
-# 	T = o.shape[0]
-# 	J = mu.shape[0]
-
-# 	log_alpha = np.zeros((T,J))
-
-# 	log_alpha[0] = np.array([np.log(pi[j]) + compute_ll(o[0],mu[j],r[j])
-# 		for j in range(J)])
-
-# 	for t in range(1,T):
-# 		for j in range(J):
-# 			log_alpha[t,j] = compute_ll(o[t],mu[j],r[j]) + logSumExp(np.log(a[:,j].T) + log_alpha[t-1])
-
-# 	return log_alpha
-
-# def backward(a, o, mu, r):
-# 	"""
-# 	Computes backward log-probabilities of all states
-# 	at all time steps.
-# 	Inputs:
-# 	a: transition matrix
-# 	o: observed n-dimensional data
-# 	mu: means of Gaussians for each state
-# 	r: variances of Gaussians for each state
-# 	"""
-# 	T = o.shape[0]
-# 	J = mu.shape[0]
-# 	log_beta = np.zeros((T,J))
-
-# 	for t in reversed(range(T-1)):
-# 		for i in range(J):
-# 			x = []
-# 			for j in range(J):
-# 				x.append(compute_ll(o[t+1], mu[j], r[j]) + log_beta[t+1,j] + np.log(a[i,j]))
-
-# 			log_beta[t,i] = logSumExp(np.array(x))
-
-# 	return log_beta
-
 def forward(pi, a, o, mu, r):
+	"""
+	Computes forward log-probabilities of all states
+	at all time steps.
+	Inputs:
+	pi: initial probability over states
+	a: transition matrix
+	o: observed n-dimensional data sequence
+	mu: means of Gaussians for each state
+	r: variances of Gaussians for each state
+	"""
 	T = o.shape[0]
 	J = mu.shape[0]
 
 	log_alpha = np.zeros((T,J))
+	log_alpha[0] = elog(pi)
 
-	log_alpha[0] = np.array([elnproduct(eln(pi[j]), compute_ll(o[0],mu[j],r[j]))
+	log_alpha[0] += np.array([compute_ll(o[0],mu[j],r[j])
 		for j in range(J)])
 
 	for t in range(1,T):
 		for j in range(J):
-			temp = elnsumx(elnproduct(eln(a[:,j]),log_alpha[t-1]))
-			log_alpha[t,j] = elnproduct(compute_ll(o[t],mu[j],r[j]), temp)
+			log_alpha[t,j] = compute_ll(o[t],mu[j],r[j]) + logSumExp(elog(a[:,j].T) + log_alpha[t-1])
 
 	return log_alpha
 
 def backward(a, o, mu, r):
+	"""
+	Computes backward log-probabilities of all states
+	at all time steps.
+	Inputs:
+	a: transition matrix
+	o: observed n-dimensional data
+	mu: means of Gaussians for each state
+	r: variances of Gaussians for each state
+	"""
 	T = o.shape[0]
 	J = mu.shape[0]
 	log_beta = np.zeros((T,J))
 
+	log_a = elog(a)
+
 	for t in reversed(range(T-1)):
 		for i in range(J):
-			temp = np.nan
+			x = []
 			for j in range(J):
-				temp = elnsum(temp, elnproduct(eln(a[i,j]), 
-					elnproduct(compute_ll(o[t+1], mu[j], r[j]), log_beta[t+1,j])))
-			log_beta[t,i] = temp
+				x.append(compute_ll(o[t+1], mu[j], r[j]) + log_beta[t+1,j] + log_a[i,j])
+
+			log_beta[t,i] = logSumExp(np.array(x))
 
 	return log_beta
 
@@ -199,6 +138,19 @@ def initializeHmm(data, nstate):
 		A[j] /= np.sum(A[j])
 
 	return A, pi
+
+def initializeHmmEqual(data, nstate):
+	A = np.zeros((nstate, nstate))
+	pi = np.zeros(nstate)
+	pi[0] = 1
+
+	for j in range(nstate-1):
+		A[j,j] = 0.5
+		A[j,j+1] = 0.5
+
+	A[nstate-1,nstate-1] = 1
+
+	return A, pi	
 
 
 class SingleGauss():
@@ -288,60 +240,47 @@ class HMM():
 			eps_k = np.random.randn()
 			self.mu[k] += 0.01*eps_k*np.sqrt(sg_model.r)
 		self.r = np.tile(sg_model.r, (nstate,1))
-		self.A, self.pi = initializeHmm(data, nstate)
+		self.A, self.pi = initializeHmmEqual(data, nstate)
 		self.nstate = nstate
-
-	def computeLogGamma(log_alpha, log_beta):
-		T, J = log_alpha.shape
-		log_gamma = elnproduct(log_alpha,log_beta)
-		normalizer = np.array([elnsumx(log_gamma[t]) for t in T])
-		log_gamma = np.divide(log_gamma, -normalizer)
-		return log_gamma
-
-	def computeLogEta(log_alpha, log_beta, o):
-		T,J = log_alpha.shape
-		log_eta = np.array((T,J,J))
-		for t in range(T-1):
-			normalizer = np.nan
-			for i in range(self.nstate):
-				for j in range(self.nstate):
-					log_eta[t,i,j] = elnproduct(log_alpha[t,i], elnproduct(eln(A[i,j]),
-						elnproduct(compute_ll(o[t+1],self.mu[j],self.r[j]), log_beta[t+1,j]))) 
-					normalizer = elnsum(normalizer, log_eta[t,i,j])
-
-			for i in range(self.nstate):
-				for j in range(self.nstate):
-					log_eta[t,i,j] = elnproduct(log_eta[t,i,j], -normalizer)
-
-		return log_eta
 
 
 	def e_step(self, data):
 		T = data.shape[0]
 		log_alpha = forward(self.pi, self.A, data, self.mu, self.r)
 		log_beta = backward(self.A, data, self.mu, self.r)
+		log_z = logSumExp(log_alpha[-1])
 
-		log_gamma = computeLogGamma(log_alpha, log_beta)
-		log_eta = computeLogEta(log_alpha, log_beta, data)
+		log_gamma = log_alpha + log_beta - log_z
+		gamma = np.exp(log_gamma)
 
-		return log_gamma, log_eta
+		log_A = elog(self.A)
+
+		xi = np.zeros((T-1, self.nstate, self.nstate))
+		for t in range(T-1):
+			for i in range(self.nstate):
+				for j in range(self.nstate):
+					xi[t,i,j] = np.exp(log_alpha[t,i] + 
+						compute_ll(data[t+1], self.mu[j], self.r[j]) + log_beta[t+1,j] + log_A[i,j] - log_z)
+
+		return gamma, xi
 
 			
 
-	def m_step(self, data, log_gamma, log_eta):
+	def m_step(self, data, gamma, xi):
 		# Sufficient statistics for computing parameter updates
-		self.pi = eexp(log_gamma[0])
+		self.pi = gamma[0]/np.sum(gamma[0])
 
-
-		eta_s = np.sum(eta[:-1], axis=0)
+		xi_s = np.sum(xi, axis=0)
 		gamma_0 = np.sum(gamma, axis=0, keepdims=True).T
+
 		gamma_1 = gamma_2 = np.zeros((self.nstate, data.shape[1]))
 		for j in range(self.nstate):
 			gamma_1[j] = np.sum(np.multiply(data, np.expand_dims(gamma[:,j],axis=1)), axis=0)
 			gamma_2[j] = np.sum(np.multiply(data**2, np.expand_dims(gamma[:,j],axis=1)), axis=0)
-
-		self.pi = gamma[0]/np.sum(gamma[0])
-		self.A = eta_s/np.sum(eta_s, axis=1)
+		# print(xi_s)
+		for i in range(self.nstate):
+			self.A[i] = xi_s[i]/np.sum(xi_s[i])
+		# print(self.A)
 		self.mu = gamma_1/gamma_0
 
 		r_num = np.zeros_like(self.r)
@@ -349,14 +288,14 @@ class HMM():
 			r_num[j] = np.sum(np.multiply(np.square(np.subtract(data, self.mu[j])), 
 				np.expand_dims(gamma[:,j],axis=1)), axis=0)
 		self.r = r_num/gamma_0
-
+		
 		return
 
 	def train(self, data):
 		# Function for training single modal Gaussian
 		for data_u in data:
-			log_gamma, log_eta = self.e_step(data_u)
-			self.m_step(data_u, log_gamma, log_eta)
+			gamma, xi = self.e_step(data_u)
+			self.m_step(data_u, gamma, xi)
 
 
 	def loglike(self, data):
