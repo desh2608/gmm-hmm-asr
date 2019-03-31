@@ -7,19 +7,6 @@ import argparse
 import logging
 import numpy as np
 
-## EXTRA CODE FOR TRACEBACK in WARNINGS
-
-# import traceback
-# import warnings
-# import sys
-
-# def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
-
-# 	log = file if hasattr(file,'write') else sys.stderr
-# 	traceback.print_stack(file=log)
-# 	log.write(warnings.formatwarning(message, category, filename, lineno, line))
-
-# warnings.showwarning = warn_with_traceback
 
 def elog(x):
 	res = np.log(x, where=(x!=0))
@@ -111,48 +98,6 @@ def backward(a, o, mu, r):
 	return log_beta
 
 
-def initializeHmm(data, nstate):
-	A = np.zeros((nstate, nstate))
-	pi = np.zeros(nstate)
-	pi[0] = 1
-
-	for data_u in data:
-		T = data_u.shape[0]
-
-		alignment = []
-		i = 0
-		x = 0
-		y = T - (T%nstate)*((T//nstate)+1)
-		for t in range(T):
-			x += 1
-			alignment.append(i)
-			if (x == T//nstate + int(t>=y)):
-				i += 1
-				x = 0
-		for v, w in zip(alignment[:-1], alignment[1:]):
-			A[v,w] += 1
-	
-		A[nstate-1, nstate-1] += 1
-
-	for j in range(nstate):
-		A[j] /= np.sum(A[j])
-
-	return A, pi
-
-def initializeHmmEqual(data, nstate):
-	A = np.zeros((nstate, nstate))
-	pi = np.zeros(nstate)
-	pi[0] = 1
-
-	for j in range(nstate-1):
-		A[j,j] = 0.5
-		A[j,j+1] = 0.5
-
-	A[nstate-1,nstate-1] = 1
-
-	return A, pi	
-
-
 class SingleGauss():
 	def __init__(self):
 		# Basic class variable initialized, feel free to add more
@@ -233,80 +178,102 @@ class GMM():
 
 class HMM():
 
-	def __init__(self, sg_model, nstate, data):
+	def __init__(self, sg_model, nstate):
 		# Basic class variable initialized, feel free to add more
-		self.mu = np.tile(sg_model.mu, (nstate,1))
-		for k in range(nstate):
-			eps_k = np.random.randn()
-			self.mu[k] += 0.01*eps_k*np.sqrt(sg_model.r)
-		self.r = np.tile(sg_model.r, (nstate,1))
-		self.A, self.pi = initializeHmm(data, nstate)
+		self.pi = np.zeros(nstate)
+		self.pi[0] = 1
 		self.nstate = nstate
 
+		self.mu = np.tile(sg_model.mu, (nstate,1))
+		self.r = np.tile(sg_model.r, (nstate,1))
 
-	def e_step(self, data):
-		T = data.shape[0]
-		log_alpha = forward(self.pi, self.A, data, self.mu, self.r)
-		log_beta = backward(self.A, data, self.mu, self.r)
-		log_z = logSumExp(log_alpha[-1])
 
-		log_gamma = log_alpha + log_beta - log_z
-		gamma = np.exp(log_gamma)
-
-		log_A = elog(self.A)
-
-		log_xi = np.zeros((T-1, self.nstate, self.nstate))
-		for t in range(T-1):
-			for i in range(self.nstate):
-				for j in range(self.nstate):
-					log_xi[t,i,j] = (log_alpha[t,i] + 
-						compute_ll(data[t+1], self.mu[j], self.r[j]) + log_beta[t+1,j] + log_A[i,j] - log_z)
-		print("gamma",gamma.sum(axis=0))
-		return gamma, log_xi
-
-			
-
-	def m_step(self, data, gamma, log_xi):
-		# Sufficient statistics for computing parameter updates
-		self.pi = gamma[0]/np.sum(gamma[0])
-		print("pi",self.pi)
-
-		log_xi_s = logSumExp(log_xi, axis=0)
-		gamma_0 = np.sum(gamma, axis=0, keepdims=True).T
-
-		gamma_1 = gamma_2 = np.zeros((self.nstate, data.shape[1]))
-		for j in range(self.nstate):
-			gamma_1[j] = np.sum(np.multiply(data, np.expand_dims(gamma[:,j],axis=1)), axis=0)
-			gamma_2[j] = np.sum(np.multiply(data**2, np.expand_dims(gamma[:,j],axis=1)), axis=0)
-		# print(xi_s)
-		for i in range(self.nstate):
-			self.A[i] = np.exp(log_xi_s[i] - logSumExp(log_xi_s[i], keepdims=True))
-		# print(self.A)
-		self.mu = gamma_1/gamma_0
-
-		r_num = np.zeros_like(self.r)
-		for j in range(self.nstate):
-			r_num[j] = np.sum(np.multiply(np.square(np.subtract(data, self.mu[j])), 
-				np.expand_dims(gamma[:,j],axis=1)), axis=0)
-		self.r = r_num/gamma_0
-		
-		return
-
-	def train(self, data):
-		# Function for training single modal Gaussian
+	def initStates(self, data):
+		self.states = []
 		for data_u in data:
-			gamma, log_xi = self.e_step(data_u)
-			self.m_step(data_u, gamma, log_xi)
+			T = data_u.shape[0]
+			state_seq = np.array([self.nstate*t/T for t in range(T)], dtype=int)
+			self.states.append(state_seq)
+
+		
+	def viterbi(self, data):
+		for u,data_u in enumerate(data):
+			T = data_u.shape[0]
+			J = self.nstate
+			s_hat = np.zeros(T, dtype=int)
+			
+			log_delta = np.zeros((T,J))
+			psi = np.zeros((T,J))
+			
+			log_delta[0] = elog(self.pi)
+			for j in range(J):
+				log_delta[0,j] += compute_ll(data_u[0], self.mu[j], self.r[j])
+
+			log_A = elog(self.A)
+			# print(self.A)
+			for t in range(1,T):
+				for j in range(J):
+					temp = np.zeros(J)
+					for i in range(J):
+						temp[i] = log_delta[t-1,i] + log_A[i,j] + compute_ll(data_u[t], self.mu[j], self.r[j])
+					log_delta[t,j] = np.max(temp)
+					psi[t,j] = np.argmax(log_delta[t-1]+log_A[:,j])
+
+
+			s_hat[T-1] = np.argmax(log_delta[T-1])
+			
+			for t in reversed(range(T-1)):
+				s_hat[t] = psi[t+1,s_hat[t+1]]
+
+			self.states[u] = s_hat
+
+
+	def m_step(self, data):
+
+		self.A = np.zeros((self.nstate,self.nstate))
+
+		gamma_0 = np.zeros(self.nstate)
+		gamma_1 = np.zeros((self.nstate, data[0].shape[1]))
+		gamma_2 = np.zeros((self.nstate, data[0].shape[1]))
+		
+		for u, data_u in enumerate(data):
+			T = data_u.shape[0]
+			seq = self.states[u]
+			gamma = np.zeros((T, self.nstate))
+
+			for t,j in enumerate(seq[:-1]):
+				self.A[j,seq[t+1]] += 1
+				gamma[t,j] = 1
+
+			gamma[T-1,self.nstate-1] = 1
+			gamma_0 += np.sum(gamma, axis=0)
+
+			for t in range(T):
+				gamma_1[seq[t]] += data_u[t]
+				gamma_2[seq[t]] += np.square(data_u[t])
+
+		gamma_0 = np.expand_dims(gamma_0, axis=1)
+		self.mu = gamma_1 / gamma_0
+		self.r = (gamma_2 - np.multiply(gamma_0, self.mu**2))/ gamma_0
+
+		for j in range(self.nstate):
+			self.A[j] /= np.sum(self.A[j])
+
+
+
+	def train(self, data, iter):
+		# Function for training single modal Gaussian
+		if (iter==0):
+			self.initStates(data)
+		self.m_step(data)
+		self.viterbi(data)
 
 
 	def loglike(self, data):
 		# Function for calculating log likelihood of single modal Gaussian
-		ll = 0
-		for data_u in data:
-			T = data_u.shape[0]
-			log_alpha_t = forward(self.pi, self.A, data_u, self.mu, self.r)[T-1]
-			ll_u = logSumExp(log_alpha_t)
-			ll += ll_u
+		T = data.shape[0]
+		log_alpha_t = forward(self.pi, self.A, data, self.mu, self.r)[T-1]
+		ll = logSumExp(log_alpha_t)
 			
 		return ll
 
@@ -352,9 +319,12 @@ def hmm_train(digits, train_data, sg_model, nstate, niter):
 	logging.info("hidden Markov model training, %d states, %d iterations", nstate, niter)
 
 	hmm_model = {}
+	data_dict = {}
 	for digit in digits:
+		hmm_model[digit] = HMM(sg_model[digit], nstate=nstate)
 		data = [train_data[id] for id in train_data.keys() if digit in id.split('_')[1]]
-		hmm_model[digit] = HMM(sg_model[digit], nstate=nstate, data=data)
+		data_dict[digit] = data
+
 
 	i = 0
 	while i < niter:
@@ -362,12 +332,13 @@ def hmm_train(digits, train_data, sg_model, nstate, niter):
 		total_log_like = 0.0
 		total_count = 0.0
 		for digit in digits:
-			data = [train_data[id] for id in train_data.keys() if digit in id.split('_')[1]]
+			data = data_dict[digit]
 			logging.info("process %d data for digit %s", len(data), digit)
 
-			hmm_model[digit].train(data)
+			hmm_model[digit].train(data, i)
 
-			total_log_like += hmm_model[digit].loglike(data)
+			for data_u in data:
+				total_log_like += hmm_model[digit].loglike(data_u)
 
 		logging.info("log likelihood: %f", total_log_like)
 		i += 1
