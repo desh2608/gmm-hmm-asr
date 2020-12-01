@@ -23,6 +23,10 @@ The optional arguments are:
 * `--nstate`: Number of states in HMM model. Default = 5
 * `--debug`: Uses only top 100 utterances for train and test
 
+### Training data format
+
+I cannot upload the full training and test data (for copyright reasons), but a small sample of the training data can be found at this [Google Drive link](https://drive.google.com/file/d/1NhF7fuX54jau9iXxuitOfm9QRQPHNW2Q/view?usp=sharing). This should help in understanding the format of the data.
+
 ### Help
 
 This code is based on a template provided by Shinji Watanabe (Johns Hopkins University), written for a course project.
